@@ -1,0 +1,150 @@
+//ハンドラークラス
+public class Match_lbc implements Queueable, Database.AllowsCallouts{
+    private List<Id> accountIds;
+
+    public Match_lbc(List<Id> accountIds){
+        this.accountIds = accountIds;
+    }
+
+    public static void setMatchKey(List<Account> getAccounts) {
+        List<Id> accountIds = new List<Id>();
+
+        for (Account account : getAccounts) {
+            accountIds.add(account.Id);
+        }
+        System.enqueueJob(new Match_lbc(accountIds));//ジョブをエンキュー
+        System.debug('enqueueAccounts: ' + accountIds);
+        }
+
+//Queueableクラスの実行メソッド
+    public void execute(QueueableContext context){
+
+        List<Account> newAccount = [SELECT Id,Name,BillingStreet,Phone FROM Account WHERE Id IN :accountIds];
+        
+            //LBCマッチ実行
+            for (Account account: newAccount){
+                if(account.name != null || account.BillingStreet != null || account.phone != null){//全てがNULLじゃなければ
+                    System.debug('マッチングを開始します。');
+                    Map<String,Object> matched = LBC_api.call_api(account);
+                    System.debug('matched :'matched);
+                    if (matched != null){
+                    
+                    Account updateList = new Account(Id = account.Id);
+
+                    if(matched.containsKey('lbc_code')){
+                        updateList.lbc__c = (String)matched.get('lbc_code');
+                        System.debug('LBC' + updateList.lbc__c);
+                    }
+                    if(matched.containsKey('commpany_name')){
+                        updateList.lbc_name__c = (String)matched.get('company_name');
+                    }
+                    if(matched.containsKey('office_name')){
+                        updateList.lbc_office_name__c = (String)matched.get('office_name');
+                    }
+                    if(matched.containsKey('address1')){
+                        updateList.lbc_address1__c = (String)matched.get('address1');
+                    }
+                    if(matched.containsKey('address2')){
+                        updateList.lbc_address2__c = (String)matched.get('address2');
+                    }
+                    if(matched.containsKey('address3')){
+                        updateList.lbc_address3__c = (String)matched.get('address3');
+                    }
+                    if(matched.containsKey('address4')){
+                        updateList.lbc_address4__c = (String)matched.get('address4');
+                    }
+                    if(matched.containsKey('address5')){
+                        updateList.lbc_address5__c = (String)matched.get('address5');
+                    }
+                    if(matched.containsKey('address6')){
+                        updateList.lbc_address6__c = (String)matched.get('address6');
+                    }
+                    if(matched.containsKey('phone_number')){
+                        updateList.lbc_phone__c = (String)matched.get('phone_number');
+                    }
+
+                    newAccount.add(updateList);//更新分を追加
+        }
+
+        }else{
+            System.debug('マッチキーが全てNULLなのでマッチングできませんでした');
+        }
+        }
+    
+        update newAccount;
+    }
+    
+}
+
+
+
+//API外部連携クラス
+
+public with sharing class LBC_api {
+    public static Boolean callout = false;
+
+    public static String API_URL = 'https://apisonar-appexlinkage.dev.usonar.io/infolinkage/side/lbcmatch';
+
+    public static Map<String, Object> call_api(Account account){
+
+        Map<String,String> requestData = new Map<String,String>{
+            'cid'     => 'RSJR4tj5QXNM2MeZx',
+            'ITEM011' => '1',
+            'ITEM013' => '1',
+            'ITEM017' => '3',
+            'ITEM018' => '1',
+            'ITEM020' => '2',
+            'ITEM021' => account.id,
+            'ITEM028' => 'appex@landscape.co.jp',
+            'ITEM037' => account.Owner.Name,
+            'ITEM041' => account.Owner.Id,
+            'ITEM057' => '1',
+            'ITEM072' => '1',
+            'ITEM101' => account.Name,
+            'ITEM102' => account.site,
+            'ITEM104' => account.lbc_address1__c,
+            'ITEM105' => account.lbc_address2__c,
+            'ITEM106' => account.lbc_address3__c,
+            'ITEM107' => account.lbc_address4__c,
+            'ITEM108' => account.lbc_address5__c,
+            'ITEM109' => account.lbc_address6__c,
+            'ITEM110' => account.phone,
+            'ITEM112' => account.Website
+            
+
+        };
+        String jsonBody = JSON.serialize(requestData);
+        System.debug(jsonBody);
+        
+        HttpRequest req = new HttpRequest();
+
+        req.setEndpoint(API_URL);
+        req.setMethod('POST');
+        req.setHeader('Content-Type', 'application/json');
+        req.setBody(jsonBody);
+        req.setTimeout(120000);
+
+        Http http = new Http();
+
+        HttpResponse res;
+        try{
+            res = http.send(req);
+        }catch (Exception e){
+            System.debug('API呼び出しエラー:' + e.getMessage());
+            return null;
+        }
+
+
+        return (Map<String,String>) JSON.deserialize(res.getBody(), Map<String,String>.class);
+    }
+}
+
+//Trigger
+trigger lbcMatchingTrigger on Account(after insert, after update) {
+    if(Trigger.isAfter){
+        if(Trigger.isInsert || Trigger.isUpdate){
+    
+        Match_lbc.setMatchKey(trigger.new);
+        }
+    }    
+}
